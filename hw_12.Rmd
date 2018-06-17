@@ -1,0 +1,654 @@
+---
+title: "Association Rules"
+subtitle: "Movie Recommender Systems"
+author: "Kayhan Momeni"
+date: "27 Khordad 1397"
+output:
+  prettydoc::html_pretty:
+    fig_width: 10
+    theme: leonids
+    highlight: github
+---
+
+<div align="center">
+<img  src="images/rs_cover.jpg"  align = 'center'>
+</div>
+
+> <p dir="RTL"> 
+با استفاده از داده نظرهای فیلم به سوالات زیر پاسخ دهید.
+</p>
+
+<p dir="RTL">
+ابتدا پکیج های مورد نیاز را صدا میزنیم و داده ها را میخوانیم و مرتبشان میکنیم. آخرین داده ها را از لینک زیر میتوان دریافت کرد:
+</p>
+https://grouplens.org/datasets/movielens/latest/
+
+```{r, eval=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(highcharter)
+library(arules)
+library(arulesViz)
+library(tidytext)
+library(wordcloud2)
+library(rlist)
+
+movies = read_csv ("/Users/kayhan/Desktop/data/movies.csv")
+movies %>%
+  select(MovieID=movieId, Title=title, Genres=genres) -> movies
+
+n = nchar(movies$Title)
+movies$Year  = str_sub(movies$Title, n-4, n-1)
+movies$Year = as.integer(movies$Year)
+n = n[!is.na(movies$Year)]
+movies$Title[!is.na(movies$Year)] = 
+  str_sub(movies$Title[!is.na(movies$Year)], 1, n-7)
+
+movies %>%
+  filter(Year>1800)-> movies
+
+ratings = read_csv("/Users/kayhan/Desktop/data/ratings.csv")
+ratings %>%
+  select(UserID=userId, MovieID=movieId, Rating=rating, Timestamp=timestamp)->ratings
+
+
+tags = read_csv("/Users/kayhan/Desktop/data/tags.csv")
+tags %>%
+  select(UserID=userId, MovieID=movieId, Tag=tag, Timestamp=timestamp)->tags
+```
+
+```{r include=FALSE, cache=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(highcharter)
+library(arules)
+library(arulesViz)
+library(tidytext)
+library(wordcloud2)
+library(rlist)
+
+movies = read_csv ("/Users/kayhan/Desktop/data/movies.csv")
+movies %>%
+  select(MovieID=movieId, Title=title, Genres=genres) -> movies
+
+n = nchar(movies$Title)
+movies$Year  = str_sub(movies$Title, n-4, n-1)
+movies$Year = as.integer(movies$Year)
+n = n[!is.na(movies$Year)]
+movies$Title[!is.na(movies$Year)] = 
+  str_sub(movies$Title[!is.na(movies$Year)], 1, n-7)
+
+movies %>%
+  filter(Year>1800)-> movies
+
+ratings = read_csv("/Users/kayhan/Desktop/data/ratings.csv")
+ratings %>%
+  select(UserID=userId, MovieID=movieId, Rating=rating, Timestamp=timestamp)->ratings
+
+
+tags = read_csv("/Users/kayhan/Desktop/data/tags.csv")
+tags %>%
+  select(UserID=userId, MovieID=movieId, Tag=tag, Timestamp=timestamp)->tags
+```
+
+***
+
+<h5 dir="RTL">
+۱. آماره های زیر را بیابید:
+</h5>
+
+
+<h5 dir="RTL">
+الف. محبوب ترین فیلم کدام است؟
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+نمودار ستونی ۱۰ تا از پر امتیاز ترین فیلم ها به صورت زیر است (فیلمهایی که کمتر از ۱۰۰ کاربر در رای گیری به آنها شرکت کرده بودند از لیست حذف شده اند):
+</p>
+```{r, warning=FALSE}
+ratings %>%
+  group_by(MovieID) %>%
+  summarise(Rating = mean(Rating), Votes=n()) %>%
+  left_join(movies) %>%
+  arrange(-Rating) %>%
+  filter(Votes>=100) %>%
+  .[1:10,] %>%
+  hchart(hcaes(x=Title, y=Rating), type="column", name="Rating") %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+
+<h5 dir="RTL">
+ب. بیشترین نظرات درباره چه فیلمی داده شده است؟
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+
+<p dir="RTL">
+نمودار ستونی ۱۰ تا از فیلمهایی که بیشترین نظرات را دریافت کرده اند:
+</p>
+```{r, warning=FALSE}
+tags %>%
+  group_by(MovieID) %>%
+  summarise(N=n()) %>%
+  left_join(movies) %>%
+  arrange(-N) %>%
+  .[1:10,] %>%
+  hchart(hcaes(x=Title, y=N), type="column", name="Number of Comments") %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+<h5 dir="RTL">
+پ. منفورترین فیلم کدام است؟
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+نمودار ستونی ۱۰ تا از فیلمهایی که کمترین امتیاز را آورده اند (آنهایی که کمتر از ۱۰۰ رای از کاربران داشتند، از لیست حذف شده اند):
+</p>
+```{r, warning=FALSE}
+ratings %>%
+  group_by(MovieID) %>%
+  summarise(Rating = mean(Rating), Votes=n()) %>%
+  left_join(movies) %>%
+  arrange(Rating) %>%
+  filter(Votes>=100) %>%
+  .[1:10,] %>%
+  hchart(hcaes(x=Title, y=Rating), type="column", name="Rating") %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+<h5 dir="RTL">
+ت. تعداد فیلم های ساخته شده در هر سال
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+فیلم های تولید شده در هر سال:
+</p>
+```{r, warning=FALSE}
+movies %>%
+  filter(!is.na(Year)) %>%
+  group_by(Year) %>%
+  summarise(N=n()) %>%
+  arrange(Year) %>%
+  hchart(hcaes(x=Year, y=N), type="spline", name="Number of Movies Produced") %>%
+  hc_add_theme(hc_theme_ffx()) 
+```
+
+<h5 dir="RTL">
+ث. در هر سالی مردم به چه ژانری علاقه مند بوده اند.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+میتوان در هر سال، فیلم برتر سال را جدا کرد و ژانر آنرا مشاهده نمود:
+</p>
+```{r, warning=FALSE}
+ratings %>%
+  group_by(MovieID) %>%
+  summarise(Rating = mean(Rating), Votes=n()) %>%
+  left_join(movies) %>%
+  group_by(Year) %>%
+  arrange(-Rating) %>%
+  filter(Votes>=100) %>%
+  mutate(tmp=1, rank=cumsum(tmp)) %>%
+  ungroup() %>%
+  arrange(-Year, -Rating) %>%
+  filter(rank==1) %>%
+  na.omit() %>%
+  select(Year, Genres)-> tmp
+
+head(tmp, nrow(tmp))
+```
+
+***
+
+<h5 dir="RTL">
+۲. ژانر فیلم ها را استخراج نمایید.  سپس آماره های زیر را استخراج نمایید:
+</h5>
+
+<h5 dir="RTL">
+الف. نمودار ستونی تعداد فیلم های هر ژانر
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+ابتدا همه ی ژانرهای ممکن و منحصر به فرد را استخراج میکنیم:
+</p>
+```{r, warning=FALSE}
+movies$Genres %>%
+  strsplit("[|]") %>%
+  unlist() %>%
+  unique() %>%
+  data.frame() %>%
+  select(Genre=".") %>%
+  as.tbl() %>%
+  na.omit() -> Genres
+Genres$Genre = as.character(Genres$Genre)
+```
+<p dir="RTL">
+سپس جدول فیلم ها را با جدول ژانر ها ضرب دکارتی میکنیم. در انتها فقط ردیف هایی را بر میگزینیم که ژانر منحربه فرد در یکی از ژانرهای فیلم موجود باشد:
+</p>
+```{r, warning=FALSE}
+tmp = merge(movies, Genres)
+tmp = tmp[which(str_detect(tmp$Genres, tmp$Genre)),]  
+```
+<p dir="RTL">
+اینطوری هر فیلم، به ازای ژانر های مختلفش یک ردیف دارد که در هر کدام فقط یکی از ژانرهایش آمده است. حالا میتوانیم بشمریم که هر ژانر چند فیلم دارد و نمودار ستونی آنها را رسم کنیم:
+</p>
+```{r, warning=FALSE}
+tmp %>%
+  group_by(Genre) %>%
+  summarise(N=n()) %>%
+  arrange(-N) %>%
+  hchart(hcaes(x=Genre, y=N), type="column", name="Number of Movies Produced") %>%
+  hc_add_theme(hc_theme_ffx()) 
+```
+
+
+<h5 dir="RTL">
+ب. نمودار همبستگی ژانرها
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+ابتدا سبد ژانرهایی که با همدیگر استفاده شده اند را میسازیم:
+</p>
+```{r, warning=FALSE}
+basket = lapply(tmp$Genres,
+                FUN = function(x) strsplit(x,split = "[|]")[[1]])
+```
+<p dir="RTL">
+سپس برای تمام 
+LHSها 
+و 
+RHSهای 
+تکی، با الگوریتم 
+apriori 
+همبستگی ها را بررسی میکنیم:
+</p>
+```{r, warning=FALSE}
+grules = apriori(basket, parameter = list(support = 0,
+                                          confidence = 0,
+                                          minlen = 2,
+                                          maxlen=2))
+```
+
+<p dir="RTL">
+حالا میتوان ماتریس همبستگی ژانرها را برحسب هم رسم کرد:
+</p>
+```{r, warning=FALSE, dpi=300}
+plot(grules, method="matrix", measure="lift")
+```
+
+<h5 dir="RTL">
+پ. متوسط امتیاز به هر ژانر
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+برای هر ژانر، متوسط تمام ریتینگهایی که از سوی کاربران دریافت کرده است را حساب میکنیم:
+</p>
+
+```{r, warning=FALSE}
+tmp2 = left_join(tmp, ratings, by="MovieID")
+tmp2 %>%
+  group_by(Genre) %>%
+  summarise(Rating = mean(Rating, na.rm = T)) %>%
+  arrange(-Rating) %>%
+  hchart(hcaes(x=Genre, y=Rating), type="column", name="Rating") %>%
+  hc_add_theme(hc_theme_ffx()) 
+```
+
+<h5 dir="RTL">
+ت. دوران طلایی فیلم سازی 
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+به ازای هر ژانر و هر سال، متوسط ریتینگ فیلم های آن ژانر در آن سال را پیدا میکنیم. ردیف هایی که کمتر از ۱۰۰۰ کاربر به آنها ریتینگ داده اند را حذف میکنیم. سپس به ازای هر ژانر، سالی که در آن بیشترین  ریتینگ را داشته است را در می آوریم و در نمودار نشان میدهیم:
+</p>
+```{r, warning=FALSE}
+tmp2 %>%
+  group_by(Genre, Year) %>%
+  summarise(Rating = mean(Rating, na.rm=T), n=n()) %>%
+  filter(n>=1000)%>%
+  group_by(Genre) %>%
+  arrange(-Rating) %>%
+  mutate(tmp=1, rank=cumsum(tmp)) %>%
+  ungroup() %>%
+  filter(rank==1) %>%
+  arrange(-Year) %>%
+  hchart(hcaes(x=Genre, y=Year), type="bar", name="Year") %>%
+  hc_add_theme(hc_theme_ffx()) %>%
+  hc_yAxis(min=1925)
+```
+<p dir="RTL">
+ریتینگ این فیلم ها در سال های ذکر شده به صورت زیر بوده است:
+</p>
+```{r, warning=FALSE}
+tmp2 %>%
+  group_by(Genre, Year) %>%
+  summarise(Rating = mean(Rating, na.rm=T), n=n()) %>%
+  filter(n>=1000)%>%
+  group_by(Genre) %>%
+  arrange(-Rating) %>%
+  mutate(tmp=1, rank=cumsum(tmp)) %>%
+  ungroup() %>%
+  filter(rank==1) %>%
+  arrange(-Year) %>%
+  hchart(hcaes(x=Genre, y=Rating), type="bar", name="Rating") %>%
+  hc_add_theme(hc_theme_ffx()) %>%
+  hc_yAxis(min=3)
+```
+
+***
+
+<h5 dir="RTL">
+۳. نمودار ابر لغات را بر حسب کلمات عنوان فیلم ها رسم نمایید.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+کلمات موجود در عنوان فیلم ها را جدا میکنیم:
+</p>
+```{r, warning=FALSE}
+movies$Title %>%
+  strsplit("[^a-zA-Z]") %>%
+  unlist() %>%
+  data.frame() %>%
+  select(word=".") %>%
+  as.tbl() %>%
+  na.omit() -> Titles
+Titles$word = as.character(Titles$word)
+```
+<p dir="RTL">
+حالا همه ی آن ها را به حروف کوچک تبدیل میکنیم:
+</p>
+```{r, warning=FALSE}
+Titles$word = str_to_lower(Titles$word)
+```
+<p dir="RTL">
+حالا باید 
+Stopping-Word 
+ها را از آنها حذف کنیم و فرکانس استفاده ی کلمات باقی مانده را حساب کنیم:
+</p>
+```{r, warning=FALSE}
+anti_join(Titles, stop_words) %>%
+  group_by(word) %>%
+  summarise(freq=n()) %>%
+  arrange(-freq) %>%
+  .[1:100,] -> Words
+```
+<p dir="RTL">
+حالا میتوانیم ابر لغات آن ها را رسم کنیم:
+</p>
+```{r, warning=FALSE}
+wordcloud2(Words, size=25)
+```
+<p dir="RTL">
+همانطور که مشخص است، کلمه ی 
+love 
+پرکاربرد ترین کلمه در بین اسامی فیلم هاست.
+</p>
+***
+
+<h5 dir="RTL">
+۴. با استفاده از قوانین همبستگی یک توصیه گر برای فیلم ها بسازید. شبیه ترین فیلم ها به لیست زیر را پیدا کنید.
+</h5>
+
+<h5>
+* Castle in the Sky (1986)
+* Cast Away (2000)
+* No Country for Old Men (2007)
+* Memento (2000)
+</h5>
+
+<h6 dir="RTL">
+پاسخ:
+</h6>
+
+<p dir="RTL">
+میتوان تابع پیشنهاد دهنده را طوری نوشت که ابتدا یک فیلم از ورودی دریافت کند. سپس به دنبال همه ی ریتینگهایی بگردد که به آن فیلم داده شده است. بعد، همه ی ریتینگ های مشابه از کاربران مشابه را در یک سبد بریزد. در نهایت با استفاده از الگوریتم 
+apriori، 
+قوانین همبستگی اش را حساب کند:
+</p>
+```{r, warning=FALSE}
+data = left_join(ratings, movies)
+data %>%
+  select(UserID, MovieID, Title, Rating) %>%
+  na.omit() %>%
+  mutate(Code=paste(UserID, Rating, sep="-"))-> data
+
+Recommender = function(Num)
+{
+  Name = movies$Title[which(movies$MovieID==Num)]
+  data %>%
+    filter(MovieID==Num) %>%
+    select(UserID, Rating) -> tmp
+  tmp$Code = paste(tmp$UserID, tmp$Rating, sep = "-")
+  
+  data %>%
+    filter(Code %in% tmp$Code) -> sample
+  
+  basket = list()
+  append = function(x) {basket <<- list.append(basket, x$Title)}
+  sample %>%
+    group_by(Code) %>%
+    do(res=append(.))
+  
+  grules = apriori(basket, parameter = list(support = 0.01, confidence = 0.1, minlen = 2),
+                   appearance = list(default="rhs", lhs=Name),
+                   control = list (verbose=F))
+  
+  rules_conf <- sort(grules, by="confidence", decreasing=T)
+  x = inspect(head(rules_conf, 12))
+}
+```
+<p dir="RTL">
+فیلم های مشابه 
+Castle-in-the-Sky 
+عبارتند از:
+</p>
+```{r, warning=FALSE}
+Recommender(6350)
+```
+
+<p dir="RTL">
+فیلم های مشابه 
+Cast-Away 
+عبارتند از:
+</p>
+```{r, warning=FALSE}
+Recommender(4022)
+```
+<p dir="RTL">
+فیلم های مشابه 
+No-Country-for-Old-Men
+عبارتند از:
+</p>
+```{r, warning=FALSE}
+Recommender(55820)
+```
+
+<p dir="RTL">
+فیلم های مشابه 
+Memento 
+عبارتند از:
+</p>
+```{r, warning=FALSE}
+Recommender(4226)
+```
+***
+
+<h5 dir="RTL">
+۵. تمرین سخت: در گیت هاب برای خود اکانت درست کنید. همه تمرین های خود را آنجا بارگذاری کنید! و لینک آن را ارسال نمایید.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+لینک اکانت گیت هاب:
+</p>
+https://github.com/KayhanMomeni
+<p dir="RTL">
+در اینجا ۱۲ ریپازیتوری به نام های 
+hw_01 
+تا 
+hw_12 
+وجود دارد که فایل 
+html 
+و تصاویر مورد نیاز برای اجرای آن و همچنین فایل کد آر مارک داون (
+RMD
+) 
+از تمرین های ۱ تا ۱۲ در آنجا وارد شده است.
+</p>
+***
+
+<h5 dir="RTL">
+۶. پنج انتقاد از درس و نحوه تدریس را بیان کنید.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+۱- مطالب و لکچرنوت ها منظم نبودند.
+</p>
+<p dir="RTL">
+۲- ساعت تشکیل کلاس ۸ صبح بود که آمدن به کلاس را خیلی دشوار میکرد.
+</p>
+<p dir="RTL">
+۳- استاد و دستیاران آموزشی درس برای پاسخگویی به سوالات مرتبط با تمرین ها، زیاد در دسترس نبودند.
+</p>
+<p dir="RTL">
+۴- در کلاس درس، اینترنت وجود نداشت و باید با اینترنت همراه خودمان وصل میشدیم.
+</p>
+<p dir="RTL">
+۵- میزان دشواری تمرین ها خیلی پراکندگی نامتعادلی داشت. به طوری که بعضی از آن ها چند ساعت و بعضی از آن ها چند روز زمان نیاز داشتند.
+</p>
+
+
+***
+
+<h5 dir="RTL">
+۷. پنج پیشنهاد برای بهتر شدن درس بیان کنید.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL">
+۱- بهتر است درس دارای وبسایتی باشد که داده ها، لکچرنوت ها و مطالب مرتبط با کلاس در آن گذاشته شود. اطلاع رسانی از طریق گروه تلگرامی مخصوصا پس از فیلتر شدن آن بسیار دشوار بود.
+</p>
+<p dir="RTL">
+۲- بهتر است لکچرنوت ها دارای توضیحات مفصل تری باشند و فرمتشان 
+PDF 
+باشد و نه 
+Html.
+</p>
+<p dir="RTL">
+۳- بهتر است مشخص باشد که هر بخش از درس، از روی چه مرجعی است.
+</p>
+<p dir="RTL">
+۴- جلساتی که لازم است، اینترنت همراه برای دانشجویان فراهم شود تا بتوان سر کلاس از آن استفاده کرد
+</p>
+<p dir="RTL">
+۵- شخصا دوست داشتم پراکندگی موضوعات کمتر می بود و در عوض، روی موضوعات مختلف عمیق تر میشدیم. برای پوشش همه ی موضوعات مثلا میتوان درس را در دو سری (۱ و ۲) ارائه داد.
+</p>
+
+***
+
+<h5 dir="RTL">
+۸. سه موضوع آماری جدید برای جایگزینی در سرفصل ها پیشنهاد دهید.
+</h5>
+<p dir="RTL">
+من شخصا دوست دارم بعد از این درس، در زمینه های زیر دانشم رو بیشتر کنم (بنابر این اگه میشد این مطالب رو در درس پوشش داد الآن خیلی خوشحال تر بودم!):
+</p>
+<p dir="RTL">
+۱- سری های زمانی و مدل های پیش بینی آنها. مثلا مدل های 
+ARIMA
+</p>
+<p dir="RTL">
+۲- مدل های ساده یادگیری ماشین
+</p>
+<p dir="RTL">
+۳- انواع تحلیل هایی که در کارهای علمی بیشتر مفیدند. مانند تحلیل فوریه، تحلیل طیفی، فیلتر دیجیتال و ...
+یا انواع مدل های کاربردی مانند مدل بلک-شولز.
+</p>
+<p dir="RTL">
+۴- 
+Poisson-regression
+</p>
+<p dir="RTL"> 
+۵- کار با داده های شبکه های اجتماعی (مثلا توییتر) و داده های مربوط به گراف یا شبکه ها. مثلا تحلیل دینامیک انتشار یک ویروس، شایعه، دروغ، اطلاعات یا ... در یک شبکه
+</p>
+
+***
+
+<h5 dir="RTL"> 
+۹. سه داده جالب برای کار در کلاس پیشنهاد دهید.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL"> 
+۱- داده های 
+ISSP 
+که شامل نظرنجی از مردم کشورهای مختلف، در حوزه های مختلف (مانند نقش دولت، دین، شبکه های اجتماعی، هویت ملی، سلامت و سیستم تامین اجتماعی، محیط زیست و ...) است:
+</p>
+[ISSP Datasets](http://www.issp.org/data-download/by-topic/)
+
+<p dir="RTL"> 
+۲- داده های مربوط به پراکندگی و اطلاعات مرتبط با ویروس زیکا:
+</p>
+[zika-data](https://github.com/BuzzFeedNews/zika-data)
+
+<p dir="RTL"> 
+۳- داده ی ارجاعات دانشمندان به هم از طریق 
+Google-Scholar
+:
+</p>
+[Google Scholar citation relations](http://www3.cs.stonybrook.edu/~leman/data/gscholar.db)
+
+<p dir="RTL"> 
+۴- داده ی مربوط به اطلاعات ساختاری کاربران فیسبوک:
+</p>
+[Facebook Data](https://archive.org/download/oxford-2005-facebook-matrix)
+
+
+***
+
+<h5 dir="RTL"> 
+۱۰. چهار نکته مهمی که در کلاس یاد گرفتید را بیان کنید.
+</h5>
+<h6 dir="RTL">
+پاسخ:
+</h6>
+<p dir="RTL"> 
+۱- بدون سند و مدرک حرف نزنم و به داده ها متکی باشم.
+</p>
+<p dir="RTL"> 
+۲- اگر مسئله ای گنگ بود، از جنبه های مختلف سعی کنم بررسی اش کنم تا کم کم صورت سوال برایم روشن شود. باید صبور باشم.
+</p>
+<p dir="RTL"> 
+۳- اگر به مشکلی برخوردم که جوابش را نمیدانستم، جوابش را جستجو کنم. احتمالا قبلا بقیه هم به آن مشکل برخورده اند و میتوان از تجربه شان استفاده کرد. باید با گوگل دوست باشیم!
+</p>
+<p dir="RTL"> 
+۴- شهودم به وقایع میتواند نسبت به حقیقت خیلیی متفاوت و اشتباه باشد.
+</p>
+<p dir="RTL"> 
+اگر به مشکلی برخوردم و راه حلش را یافتم، تجربه ام از مشکل و راه حلم را با دیگران به اشترام بگذارم.
+</p>
